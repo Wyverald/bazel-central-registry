@@ -1,0 +1,105 @@
+name: Gemini PR Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened, labeled]
+    branches:
+      - main
+  pull_request_target:
+    types: [opened, ready_for_review, reopened, labeled]
+    branches:
+      - main
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Pull request number to review'
+        required: true
+        type: string
+      additional_context:
+        description: 'Optional focus or instructions for the review'
+        required: false
+        type: string
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}'
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  review:
+    if: |-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.fork == false &&
+        (
+          (github.event.action == 'labeled' && github.event.label.name == 'gemini-review') ||
+          (
+            contains(fromJSON('["opened", "ready_for_review", "reopened"]'), github.event.action) &&
+            github.event.pull_request.draft == false
+          )
+        )
+      ) ||
+      (
+        github.event_name == 'pull_request_target' &&
+        github.event.pull_request.head.repo.fork == true &&
+        (
+          (github.event.action == 'labeled' && github.event.label.name == 'gemini-review') ||
+          (
+            contains(fromJSON('["opened", "ready_for_review", "reopened"]'), github.event.action) &&
+            github.event.pull_request.draft == false
+          )
+        )
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        github.event.sender.type == 'User' &&
+        (
+          startsWith(github.event.comment.body, '@bazel-io gemini-review') ||
+          startsWith(github.event.comment.body, '@gemini-cli /review')
+        ) &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        # SECURITY: For `pull_request_target` runs (fork PRs), always check out the
+        # base commit (`main`), never the untrusted PR head. For same-repo `pull_request`
+        # runs, `ref` is empty so the PR branch is checked out (allowing changes to
+        # the review workflow/action itself to be tested in a same-repo PR).
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || '' }}
+
+      - name: Run BCR Gemini PR Reviewer
+        uses: ./.github/actions/gemini-review
+        with:
+          github_token: ${{ secrets.BCR_PR_REVIEW_HELPER_TOKEN || github.token }}
+          pr_number: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+          additional_context: ${{ inputs.additional_context }}
+          gcp_location: ${{ vars.GOOGLE_CLOUD_LOCATION || 'global' }}
+          gcp_project_id: ${{ vars.GOOGLE_CLOUD_PROJECT || 'bazel-public' }}
+          gcp_service_account: ${{ vars.SERVICE_ACCOUNT_EMAIL }}
+          gcp_workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_cli_version: ${{ vars.GEMINI_CLI_VERSION }}
+          gemini_debug: ${{ fromJSON(vars.DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}
+          gemini_model: ${{ vars.GEMINI_MODEL || 'gemini-4-argon' }}
+          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
+          use_gemini_code_assist: ${{ vars.GOOGLE_GENAI_USE_GCA || 'false' }}
+          use_vertex_ai: ${{ vars.GOOGLE_GENAI_USE_VERTEXAI || (secrets.GEMINI_API_KEY == '' && 'true' || 'false') }}
