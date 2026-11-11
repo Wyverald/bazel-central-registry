@@ -23,7 +23,7 @@ inputs:
   gemini_model:
     description: 'Gemini model name'
     required: false
-    default: 'gemini-4-argon'
+    default: 'gemini-4-carbon'
 
 runs:
   using: 'composite'
@@ -81,6 +81,13 @@ runs:
         cat <<'EOF' > /tmp/agy-settings.json
         {
           "modelProvider": "gemini",
+          "customModelsConfig": {
+            "customModels": {
+              "gemini-4-carbon": {
+                "modelName": "gemini-api://gemini-4-carbon"
+              }
+            }
+          },
           "permissions": {
             "allow": [
               "read_file(*)"
